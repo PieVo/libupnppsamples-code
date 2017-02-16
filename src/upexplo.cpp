@@ -233,30 +233,42 @@ int tpAlbumArt(const string& fname)
 {
     MRDH rdr = getRenderer(fname);
     if (!rdr) {
+        cerr << "Can't connect to renderer " << fname << endl;
         return 1;
     }
-    AVTH avt = rdr->avt();
-    if (!avt) {
-        cerr << "Device " << fname << " has no AVTransport service" << endl;
-        return 1;
-    }
+
     string uri;
-    AVTransport::TransportInfo tinfo;
-    int ret;
-    if ((ret = avt->getTransportInfo(tinfo))) {
-        cerr << "getTransportInfo failed. Code " << ret << endl;
-        return 1;
-    } else if (tinfo.tpstatus == AVTransport::TPS_Ok && 
-               (tinfo.tpstate == AVTransport::Playing || 
-                tinfo.tpstate == AVTransport::PausedPlayback)) {
-        AVTransport::PositionInfo info;
-        if ((ret = avt->getPositionInfo(info))) {
-            cerr << "getPositionInfo failed. Code " << ret << endl;
-            return 1;
+
+    OHIFH ohinfo = rdr->ohif();
+    if (ohinfo) {
+        UPnPDirObject dirent;
+        if (ohinfo->metatext(&dirent) == 0) {
+            uri = dirent.getprop("upnp:albumArtURI");
         } else {
-            uri = info.trackmeta.getprop("upnp:albumArtURI");
+            //cerr << "metatext failed\n";
         }
     }
+
+    if (uri.empty()) {
+        AVTH avt = rdr->avt();
+        if (avt) {
+            AVTransport::TransportInfo tinfo;
+            int ret;
+            if ((ret = avt->getTransportInfo(tinfo))) {
+                cerr << "getTransportInfo failed. Code " << ret << endl;
+            } else if (tinfo.tpstatus == AVTransport::TPS_Ok && 
+                       (tinfo.tpstate == AVTransport::Playing || 
+                        tinfo.tpstate == AVTransport::PausedPlayback)) {
+                AVTransport::PositionInfo info;
+                if ((ret = avt->getPositionInfo(info))) {
+                    cerr << "getPositionInfo failed. Code " << ret << endl;
+                } else {
+                    uri = info.trackmeta.getprop("upnp:albumArtURI");
+                }
+            }
+        }
+    }
+
     cout << uri << endl;
     return 0;
 }
@@ -487,10 +499,10 @@ int main(int argc, char *argv[])
             fname = argv[optind++];
             arg = argv[optind++];
     }
-            
+
     if (Logger::getTheLog("/tmp/upexplo.log") == 0) {
         cerr << "Can't initialize log" << endl;
-        return 1;
+        //return 1;
     }
     Logger::getTheLog("")->setLogLevel(Logger::LLDEB1);
 
@@ -500,14 +512,14 @@ int main(int argc, char *argv[])
         cerr << "Can't get LibUPnP" << endl;
         return 1;
     }
-    cerr << "hwaddr " << hwa << endl;
+    //cerr << "hwaddr " << hwa << endl;
 
     if (!mylib->ok()) {
         cerr << "Lib init failed: " <<
             mylib->errAsString("main", mylib->getInitError()) << endl;
         return 1;
     }
-    mylib->setLogFileName("/tmp/libupnp.log", LibUPnP::LogLevelDebug);
+//    mylib->setLogFileName("/tmp/libupnp.log", LibUPnP::LogLevelDebug);
 
     if ((op_flags & OPT_l)) {
         while (true) {
