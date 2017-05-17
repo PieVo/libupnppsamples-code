@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <mutex>
 #include <condition_variable>
+#include <iomanip>
 
 #include "libupnpp/upnpplib.hxx"
 #include "libupnpp/log.hxx"
@@ -22,18 +23,39 @@ using namespace UPnPClient;
 using namespace UPnPP;
 using namespace std;
 
+static int	   op_flags;
+#define OPT_a 0x1    
+#define OPT_c 0x2    
+#define OPT_l 0x4    
+#define OPT_M 0x8    
+#define OPT_m 0x10   
+#define OPT_P 0x20   
+#define OPT_p 0x40   
+#define OPT_r 0x80   
+#define OPT_s 0x100
+#define OPT_u 0x200
+#define OPT_V 0x400  
+#define OPT_v 0x800  
+
+
 UPnPDeviceDirectory *superdir;
 
 std::mutex reporterLock;
 std::condition_variable evloopcond;
 
-vector<string> deviceFNs;
-vector<string> deviceUDNs;
-vector<string> deviceTypes;
+vector<UPnPDeviceDesc> deviceList;
 static void clearDevices() {
-    deviceFNs.clear();
-    deviceUDNs.clear();
-    deviceTypes.clear();
+    deviceList.clear();
+}
+
+static bool findKnownDevice(const string& UDN)
+{
+    for (const auto& device : deviceList) {
+        if (device.UDN == UDN) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool 
@@ -42,24 +64,30 @@ reporter(const UPnPDeviceDesc& device, const UPnPServiceDesc&)
     std::unique_lock<std::mutex> lock(reporterLock);
     //cerr << "reporter: " << device.friendlyName << " s " << 
     // device.deviceType << endl;
-    if (find(deviceUDNs.begin(), deviceUDNs.end(), device.UDN)
-        == deviceUDNs.end()) {
-        deviceFNs.push_back(device.friendlyName);
-        deviceUDNs.push_back(device.UDN);
-        deviceTypes.push_back(device.deviceType);
+    if (!findKnownDevice(device.UDN)) {
+        deviceList.push_back(device);
         evloopcond.notify_all();
     }
     return true;
 }
 
+static void showDevice(const UPnPDeviceDesc& device)
+{
+    const int namewidth(25);
+    const int typewidth(48);
+    cout << setw(namewidth) << device.friendlyName << setw(0) <<
+        setw(typewidth) << string(" (") + device.deviceType + ")";
+    if (op_flags & OPT_u) {
+        cout << " " << device.URLBase;
+    }
+    cout << endl;
+}
+
 static bool traverser(const UPnPDeviceDesc& device, const UPnPServiceDesc& srv)
 {
-    if (find(deviceUDNs.begin(), deviceUDNs.end(), device.UDN)
-        == deviceUDNs.end()) {
-        cout << device.friendlyName <<" ("<< device.deviceType << ")" << endl;
-        deviceFNs.push_back(device.friendlyName);
-        deviceUDNs.push_back(device.UDN);
-        deviceTypes.push_back(device.deviceType);
+    if (!findKnownDevice(device.UDN)) {
+        showDevice(device);
+        deviceList.push_back(device);
     }        
     return true;
 }
@@ -91,18 +119,18 @@ void listDevices()
 #endif
         if (ms > 0) {
             evloopcond.wait_for(lock, std::chrono::milliseconds(ms));
-            if (deviceFNs.size() > ndevices) {
-                for (unsigned int i = ndevices; i < deviceFNs.size(); i++) {
-                    cout << deviceFNs[i] <<" ("<< deviceTypes[i] << ")" << endl;
+            if (deviceList.size() > ndevices) {
+                for (unsigned int i = ndevices; i < deviceList.size(); i++) {
+                    showDevice(deviceList[i]);
                 }
-                ndevices = deviceFNs.size();
+                ndevices = deviceList.size();
             }
         } else {
+            cerr << "Initial delay done\n";
             break;
         }
     }
 
-    cerr << "Initial delay done\n";
 
     // Called after initial delay done. Unset the callback and
     // traverse the directory
@@ -112,7 +140,7 @@ void listDevices()
     }
     clearDevices();
     auto ret = superdir->traverse(traverser);
-    cerr << "Now having " << deviceUDNs.size() << " devices " << endl;
+    cerr << "Now having " << deviceList.size() << " devices " << endl;
 }
 
 void listServers()
@@ -413,6 +441,7 @@ void getSearchCaps(const string& friendlyName)
 static char *thisprog;
 static char usage [] =
             " -l : list devices\n"
+            "  [-u] Add url to device lines\n"
             " -r <server> <objid> list object id (root is '0')\n"
             " -s <server> <searchstring> search for string\n"
             " -m <server> <objid> : list object metadata\n"
@@ -433,22 +462,9 @@ Usage(void)
     fprintf(stderr, "%s: usage:\n%s", thisprog, usage);
     exit(1);
 }
-static int	   op_flags;
-#define OPT_l    0x1
-#define OPT_r    0x2
-#define OPT_s    0x4
-#define OPT_m    0x8
-#define OPT_c    0x10
-#define OPT_M    0x20
-#define OPT_v    0x40
-#define OPT_V    0x80
-#define OPT_p    0x100
-#define OPT_P    0x200
-
-#define OPT_aa   0x10000
 
 static struct option long_options[] = {
-    {"album-art", 0, 0, OPT_aa},
+    {"album-art", 0, 0, 'a'},
     {0, 0, 0, 0}
 };
 
@@ -461,9 +477,10 @@ int main(int argc, char *argv[])
 
     int ret;
     int option_index = 0;
-    while ((ret = getopt_long(argc, argv, "MPSVclmprsvx", 
+    while ((ret = getopt_long(argc, argv, "MPSVclmprsuvx", 
                               long_options, &option_index)) != -1) {
         switch (ret) {
+        case 'a': if (op_flags) Usage(); op_flags |= OPT_a; break;
         case 'M': if (op_flags) Usage(); op_flags |= OPT_M; break;
         case 'P': if (op_flags) Usage(); op_flags |= OPT_P; break;
         case 'V': if (op_flags) Usage(); op_flags |= OPT_V; break;
@@ -473,9 +490,8 @@ int main(int argc, char *argv[])
         case 'p': if (op_flags) Usage(); op_flags |= OPT_p; break;
         case 'r': if (op_flags) Usage(); op_flags |= OPT_r; break;
         case 's': if (op_flags) Usage(); op_flags |= OPT_s; break;
+        case 'u': op_flags |= OPT_u; break;
         case 'v': if (op_flags) Usage(); op_flags |= OPT_v; break;
-
-        case OPT_aa: if (op_flags) Usage(); op_flags |= OPT_aa; break;
 
         default:
             Usage();
@@ -487,7 +503,7 @@ int main(int argc, char *argv[])
             Usage();
     }
 
-    if (op_flags & (OPT_c | OPT_v | OPT_P | OPT_M | OPT_aa)) {
+    if (op_flags & (OPT_c | OPT_v | OPT_P | OPT_M | OPT_a)) {
             if (optind != argc - 1) 
                 Usage();
             fname = argv[optind++];
@@ -546,7 +562,7 @@ int main(int argc, char *argv[])
         tpPlayStop(fname, iarg);
     } else if ((op_flags & OPT_P)) {
         tpPause(fname);
-    } else if ((op_flags & OPT_aa)) {
+    } else if ((op_flags & OPT_a)) {
         return tpAlbumArt(fname);
     } else {
         Usage();
