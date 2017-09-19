@@ -36,7 +36,8 @@ static int	   op_flags;
 #define OPT_u 0x200
 #define OPT_V 0x400  
 #define OPT_v 0x800  
-
+#define OPT_1 0x1000
+#define OPT_U 0x2000
 
 UPnPDeviceDirectory *superdir;
 
@@ -79,6 +80,9 @@ static void showDevice(const UPnPDeviceDesc& device)
         setw(typewidth) << string(" (") + device.deviceType + ")";
     if (op_flags & OPT_u) {
         cout << " " << device.URLBase;
+    }
+    if (op_flags & OPT_U) {
+        cout << " " << device.UDN;
     }
     cout << endl;
 }
@@ -126,18 +130,20 @@ void listDevices()
                 ndevices = deviceList.size();
             }
         } else {
-            cerr << "Initial delay done\n";
-            break;
+            if (cbindex >= 0) {
+                cerr << "Initial delay done. " << deviceList.size() << " devices\n";
+                UPnPDeviceDirectory::delCallback(cbindex);
+                cbindex = -2;
+                return;
+            } else {
+                break;
+            }
         }
     }
 
 
     // Called after initial delay done. Unset the callback and
     // traverse the directory
-    if (cbindex >= 0) {
-        UPnPDeviceDirectory::delCallback(cbindex);
-        cbindex = -2;
-    }
     clearDevices();
     auto ret = superdir->traverse(traverser);
     cerr << "Now having " << deviceList.size() << " devices " << endl;
@@ -191,14 +197,16 @@ public:
 
 };
 
-MRDH getRenderer(const string& friendlyName)
+MRDH getRenderer(const string& name)
 {
     if (superdir == 0) {
         superdir = UPnPDeviceDirectory::getTheDir();
     }
 
     UPnPDeviceDesc ddesc;
-    if (superdir->getDevByFName(friendlyName, ddesc)) {
+    if (superdir->getDevByUDN(name, ddesc)) {
+        return MRDH(new MediaRenderer(ddesc));
+    } else if (superdir->getDevByFName(name, ddesc)) {
         return MRDH(new MediaRenderer(ddesc));
     }
     cerr << "getDevByFname failed" << endl;
@@ -441,6 +449,7 @@ void getSearchCaps(const string& friendlyName)
 static char *thisprog;
 static char usage [] =
             " -l : list devices\n"
+            "  -1 : loop only once (initial discovery)\n"
             "  [-u] Add url to device lines\n"
             " -r <server> <objid> list object id (root is '0')\n"
             " -s <server> <searchstring> search for string\n"
@@ -452,8 +461,8 @@ static char usage [] =
             " -p <renderer> 1|0 play/stop\n"
             " -P <renderer>  pause\n"
             " --album-art <renderer> print album art uri for playing track\n"
-            "\nFor now all <renderer> and <server> params should be "
-            "\"friendly names\", not UUIDs\n"
+            "\n<renderer> params can be either \"friendly names\", or UDNs\n"
+            "<server> params must be \"friendly names\"\n"
             " \n"
             ;
 static void
@@ -477,9 +486,10 @@ int main(int argc, char *argv[])
 
     int ret;
     int option_index = 0;
-    while ((ret = getopt_long(argc, argv, "MPSVclmprsuvx", 
+    while ((ret = getopt_long(argc, argv, "1MPSVclmprsUuvx", 
                               long_options, &option_index)) != -1) {
         switch (ret) {
+        case '1': op_flags |= OPT_1; break;
         case 'a': if (op_flags) Usage(); op_flags |= OPT_a; break;
         case 'M': if (op_flags) Usage(); op_flags |= OPT_M; break;
         case 'P': if (op_flags) Usage(); op_flags |= OPT_P; break;
@@ -491,6 +501,7 @@ int main(int argc, char *argv[])
         case 'r': if (op_flags) Usage(); op_flags |= OPT_r; break;
         case 's': if (op_flags) Usage(); op_flags |= OPT_s; break;
         case 'u': op_flags |= OPT_u; break;
+        case 'U': op_flags |= OPT_U; break;
         case 'v': if (op_flags) Usage(); op_flags |= OPT_v; break;
 
         default:
@@ -540,6 +551,9 @@ int main(int argc, char *argv[])
     if ((op_flags & OPT_l)) {
         while (true) {
             listDevices();
+            if (op_flags & OPT_1) {
+                break;
+            }
             sleep(5);
         }
     } else if ((op_flags & OPT_m)) {

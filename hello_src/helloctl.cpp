@@ -29,7 +29,11 @@ public:
         // No event handling. Look at, e.g. rdcvolume.cpp for an example
     }
 
-    virtual ~HelloCTL() {  }
+    virtual ~HelloCTL() {}
+
+    virtual bool serviceTypeMatch(const std::string& tp) {
+        return isHelloService(tp);
+    }
 
     /* Test that a service type matches ours. This can be used
        with the directory traversal routine */

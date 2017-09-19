@@ -21,7 +21,6 @@ using namespace std::placeholders;
 //using namespace UPnPClient;
 //using namespace UPnPP;
 
-
 // Locally defined control class for the Rendering Control
 // service. We're just copying code from the libupnpp actually, this is
 // just to show that it can be done outside the library.
@@ -32,7 +31,13 @@ public:
     MyRDC(const UPnPClient::UPnPDeviceDesc& device,
           const UPnPClient::UPnPServiceDesc& service)
         : UPnPClient::Service(device, service) {
+        serviceInit(device, service);
+    }
+    MyRDC() {}
+    virtual ~MyRDC() {}
 
+    bool serviceInit(const UPnPClient::UPnPDeviceDesc& device,
+                     const UPnPClient::UPnPServiceDesc& service) {
         // We want to have a look at our service description file
         // (xml) to retrieve the min/max/step values for the
         // volume. Not all services need to do this.
@@ -50,13 +55,11 @@ public:
                 m_volstep = 1;
             }
         }
-
-        // Say that we want to receive events. This is not mandatory
-        registerCallback();
+        return true;
     }
-
-    virtual ~MyRDC() {
-        unregisterCallback();
+    
+    virtual bool serviceTypeMatch(const std::string& tp) {
+        return isRDCService(tp);
     }
 
     /* Test that a service type matches ours. This can be used
@@ -153,7 +156,7 @@ int MyRDC::getVolume(const string& channel)
 shared_ptr<MyRDC> getService(const string& name)
 {
     // Initialize and get a discovery directory handle.
-    auto *superdir = UPnPClient::UPnPDeviceDirectory::getTheDir();
+    auto *superdir = UPnPClient::UPnPDeviceDirectory::getTheDir(2);
     if (nullptr == superdir) {
         cerr << "Discovery init failed\n";
         return shared_ptr<MyRDC>();

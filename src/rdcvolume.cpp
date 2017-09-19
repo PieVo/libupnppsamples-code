@@ -157,7 +157,7 @@ int main(int argc, char **argv)
     argc--;
     
     // Initialize libupnpp logging
-    Logger::getTheLog("")->setLogLevel(Logger::LLERR);
+    Logger::getTheLog("stderr")->setLogLevel(Logger::LLDEB1);
 
     // Explicitely initialize libupnpp so that we can display a
     // possible error
