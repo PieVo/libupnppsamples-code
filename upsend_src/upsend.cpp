@@ -221,8 +221,9 @@ string didlmake(const string& uri, const string& mime)
 
 static char *thisprog;
 static char usage [] =
-"<audiofile> <renderer> : play audio on given renderer\n"
-                                           ;
+"-h <hostname/ip> -p <port> <audiofile> <renderer> : play audio on given renderer\n" \
+"(Default port = 8869\n";
+
 static void Usage(void)
 {
     fprintf(stderr, "%s: usage:\n%s", thisprog, usage);
@@ -314,9 +315,9 @@ int main(int argc, char *argv[])
     bool makewav = false;
     if (!audiofile.compare("stdin")) {
         ctxt->filename = audiofile;
-        ctxt->ext = "wav";
-        ctxt->content_type = "audio/wav";
-        makewav = true;
+        ctxt->ext = "pcm";
+        ctxt->content_type = "audio/l16";
+        makewav = false;
     } else {
         if (!whatfile(audiofile, ctxt)) {
             cerr << "Can't identify file " << audiofile << endl;

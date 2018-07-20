@@ -62,7 +62,7 @@ static const char *ValueKindToCp(enum MHD_ValueKind kind)
     }
 }
 
-static int print_out_key (void *cls, enum MHD_ValueKind kind, 
+static int print_out_key (void *cls, enum MHD_ValueKind kind,
                           const char *key, const char *value)
 {
     LOGDEB(ValueKindToCp(kind) << ": " << key << " -> " << value << endl);
@@ -88,7 +88,7 @@ data_generator(void *cls, uint64_t pos, char *buf, size_t max)
         LOGDEB1("data_generator: already eof\n");
         return -1;
     }
-    
+
     // Loop reading on the input queue until we have satistified the request
     size_t bytes = 0;
     while (bytes < max) {
@@ -135,10 +135,10 @@ static void ContentReaderFreeCallback(void *cls)
     dataqueueWaitCond.notify_all();
 }
 
-static int answer_to_connection(void *cls, struct MHD_Connection *connection, 
-                                const char *url, 
-                                const char *method, const char *version, 
-                                const char *upload_data, 
+static int answer_to_connection(void *cls, struct MHD_Connection *connection,
+                                const char *url,
+                                const char *method, const char *version,
+                                const char *upload_data,
                                 size_t *upload_data_size, void **con_cls)
 {
     AudioSink::Context *ctxt = (AudioSink::Context *)cls;
@@ -180,9 +180,12 @@ static int answer_to_connection(void *cls, struct MHD_Connection *connection,
 #warning content-length is needed for mpd to play wav (else tries to seek).
         MHD_add_response_header(response, "Transfer-Encoding", "chunked");
 #else
-        char cl[100];
-        sprintf(cl, "%lld", (long long)ctxt->filesize);
-        MHD_add_response_header(response, "Content-Length", cl);
+        // Streaming data from stdin does not have a content length
+	if (ctxt->content_type != "audio/l16") {
+            char cl[100];
+            sprintf(cl, "%lld", (long long)ctxt->filesize);
+             MHD_add_response_header(response, "Content-Length", cl);
+        }
 #endif
 
     int ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
