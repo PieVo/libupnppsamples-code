@@ -154,7 +154,7 @@ static int answer_to_connection(void *cls, struct MHD_Connection *connection,
         return MHD_YES;
     }
 
-    LOGDEB("answer_to_connection: url " << url << " method " << method << 
+    LOGDEB("answer_to_connection: url " << url << " method " << method <<
            " version " << version << endl);
 
     long long size = MHD_SIZE_UNKNOWN;
@@ -162,14 +162,16 @@ static int answer_to_connection(void *cls, struct MHD_Connection *connection,
 
     // the block size seems to be flatly ignored by libmicrohttpd
     // Any random value would probably work the same
-    struct MHD_Response *response = 
-        MHD_create_response_from_callback(size, 4096, &data_generator, 
+    struct MHD_Response *response =
+        MHD_create_response_from_callback(size, 4096, &data_generator,
                                           dgc, ContentReaderFreeCallback);
     if (response == NULL) {
         LOGERR("httpgate: answer: could not create response" << endl);
         return MHD_NO;
     }
 
+    MHD_add_response_header(response, "Accept-Ranges", "none");
+    MHD_add_response_header(response, "Cache-Control", "no-cache");
     MHD_add_response_header(response, "Content-Type",
                             ctxt->content_type.c_str());
 
