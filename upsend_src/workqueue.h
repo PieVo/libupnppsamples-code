@@ -28,7 +28,7 @@
 #include <mutex>
 #include <condition_variable>
 
-#include "log.h"
+#include <libupnpp/log.h>
 
 /**
  * A WorkQueue manages the synchronisation around a queue of work items,
