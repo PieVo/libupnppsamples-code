@@ -56,7 +56,7 @@ MRDH getRenderer(const string& name)
             return MRDH();
         }
     }
-    
+
     UPnPDeviceDesc ddesc;
     if (superdir->getDevByFName(name, ddesc)) {
         return MRDH(new MediaRenderer(ddesc));
@@ -111,38 +111,87 @@ void *readworker(void *a)
     AudioSink::Context *ctxt = (AudioSink::Context *)a;
 
     int fd = 0;
+    fd_set set;
+    int n;
+    int no_data = 0;
+    unsigned int allocbytes = 4096; //sizeof
+
     if (ctxt->filename.compare("stdin")) {
-        if ((fd = open(ctxt->filename.c_str(), O_RDONLY)) < 0) {
+        if ((fd = open(ctxt->filename.c_str(), O_RDWR | O_NONBLOCK)) < 0) {
             cerr << "readWorker: can't open " << ctxt->filename <<
                 " for reading, errno " << errno << endl;
             exit(1);
         }
     }
+    FD_ZERO(&set);
+    FD_SET(fd, &set);
 
+    char *buf = (char *)malloc(allocbytes);
+    if (buf == 0) {
+        cerr << "readWorker: can't allocate " << allocbytes << " bytes\n";
+        exit(1);
+    }
+
+    // Loop around select, for sending chunks into the buffer
     for (;;) {
-        unsigned int allocbytes = 4096;
-        char *buf = (char *)malloc(allocbytes);
-        if (buf == 0) {
-            cerr << "readWorker: can't allocate " << allocbytes << " bytes\n";
-            exit(1);
-        }
-        ssize_t readbytes = read(fd, buf, allocbytes);
+        n = select(fd+1, &set, NULL, NULL, NULL);
+	if (!n) {
+	  continue;
+	}
+        if (n == -1) {
+          perror("select");
+	  return nullptr;
+	}
+        allocbytes = 4096;
+	unsigned int totalbytes = 0;
+	if (FD_ISSET(fd, &set)) {
+            // Keep on reading until an entire chunk is available
+	    for (;;) {
+                ssize_t readbytes = read(fd, buf, allocbytes);
+	        if (readbytes > 0) {
+	            allocbytes -= readbytes;
+	            totalbytes += readbytes;
+	            buf += totalbytes;
+	            if (allocbytes == 0) {
+                        AudioMessage *ap = new AudioMessage(buf, readbytes, totalbytes);
+	                if (!audioqueue.put(ap, false)) {
+		            cerr << "readWorker: queue dead: exiting\n";
+		            exit(1);
+	                }
+	                ctxt->streaming = true;
+	            }
+	        } else {
+                    // If this occurs very often, there is probably no more music
+		    if (errno == EWOULDBLOCK) {
+	                if (++no_data > 10) {
+                            ctxt->streaming = false;
+	                }
+                    break;
+	            } else {
+                        perror("read");
+		        return nullptr;
+	            }
+	        }
+	    }
+	}
+    }
+
         //cerr << "readworker: got " << readbytes << "bytes\n";
-        if (readbytes < 0) {
-            cerr << "readWorker: read error on " << ctxt->filename <<
-                " errno " << errno << endl;
-            exit(1);
-        } else if (readbytes == 0) {
+ //       if (readbytes < 0) {
+   //         cerr << "readWorker: read error on " << ctxt->filename <<
+     //           " errno " << errno << endl;
+       //     exit(1);
+       // } else if (readbytes == 0) {
             audioqueue.waitIdle();
             audioqueue.setTerminateAndWait();
             return nullptr;
-        }
-        AudioMessage *ap = new AudioMessage(buf, readbytes, allocbytes);
-        if (!audioqueue.put(ap, false)) {
-            cerr << "readWorker: queue dead: exiting\n";
-            exit(1);
-        }
-    }
+        //}
+        //AudioMessage *ap = new AudioMessage(buf, readbytes, allocbytes);
+        //if (!audioqueue.put(ap, false)) {
+         //   cerr << "readWorker: queue dead: exiting\n";
+         //   exit(1);
+       // }
+   // }
 }
 
 string didlmake(const string& uri, const string& mime)
@@ -194,10 +243,10 @@ int main(int argc, char *argv[])
     thisprog = argv[0];
     string host = "localhost";
     int port = 8869;
-    
+
     int option_index = 0;
     int ret;
-    while ((ret = getopt_long(argc, argv, "h:p:", 
+    while ((ret = getopt_long(argc, argv, "h:p:",
                               long_options, &option_index)) != -1) {
         cerr << "ret is " << ret << endl;
         switch (ret) {
@@ -207,11 +256,11 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (optind != argc - 2) 
+    if (optind != argc - 2)
         Usage();
     string audiofile = argv[optind++];
     string renderer = argv[optind++];
-            
+
     if (Logger::getTheLog("stderr") == 0) {
         cerr << "Can't initialize log" << endl;
         return 1;
@@ -259,7 +308,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    
+
     // Identify file
     AudioSink::Context *ctxt = new AudioSink::Context(&audioqueue);
     bool makewav = false;
@@ -278,7 +327,7 @@ int main(int argc, char *argv[])
     unordered_map<string,string> c{{"httpport", SoapHelp::i2s(port)},
         {"httphost", host}};
     ctxt->config = c;
-    
+
     // Start the http thread
     audioqueue.start(1, (void *(*)(void *))(httpAudioSink.worker), ctxt);
 
@@ -298,25 +347,48 @@ int main(int argc, char *argv[])
         AudioMessage *ap = new AudioMessage(buf, sz, allocbytes);
         audioqueue.put(ap, false);
     }
-    
+
+    // Initialize value that indicates that streaming data is available
+    ctxt->streaming = false;
+
     // Start the reading thread
     std::thread readthread(readworker, ctxt);
 
     string uri("http://" + host + ":" + SoapHelp::i2s(port) + "/stream." +
                ctxt->ext);
+    bool play_was_send = false;
+    bool stop_was_send = false;
+    for (;;)
+    {
+      if (ctxt->streaming && !play_was_send)
+      {
+        // Start the renderer
+        if (avth->setAVTransportURI(uri, didlmake(uri, ctxt->content_type)) != 0) {
+            cerr << "setAVTransportURI failed\n";
+            return 1;
+        }
+        // Philips streamium needs a bit of delay here. It would be best to wait for
+        // confirmation of the above.
+        usleep(100*1000);
 
-    // We'd need a few options here to decide what to do if already playing:
-    // wait (would allow to queue multiple songs), or interrupt.
-
-    // Start the renderer
-    if (avth->setAVTransportURI(uri, didlmake(uri, ctxt->content_type)) != 0) {
-        cerr << "setAVTransportURI failed\n";
-        return 1;
-    }
-
-    if (avth->play() != 0) {
-        cerr << "play failed\n";
-        return 1;
+        if (avth->play() != 0) {
+            cerr << "play failed\n";
+            return 1;
+        }
+        play_was_send = true;
+        stop_was_send = false;
+      }
+      if (!ctxt->streaming && !stop_was_send)
+      {
+        // Stop before starting somehting
+        if (avth->stop() != 0) {
+          cerr << "stop failed\n";
+	  return 1;
+        }
+        stop_was_send = true;
+        play_was_send = false;
+      }
+      usleep(500*1000);
     }
     readthread.join();
     return 0;

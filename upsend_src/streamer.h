@@ -53,6 +53,7 @@ public:
         std::string content_type;
         std::string ext;
         off_t filesize;
+	bool streaming;
     };
 
     AudioSink(void *(*w)(Context *))
