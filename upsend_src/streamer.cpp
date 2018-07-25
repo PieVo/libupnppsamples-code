@@ -185,7 +185,9 @@ static int answer_to_connection(void *cls, struct MHD_Connection *connection,
             char cl[100];
             sprintf(cl, "%lld", (long long)ctxt->filesize);
              MHD_add_response_header(response, "Content-Length", cl);
-        }
+        } else {
+            LOGDEB("Not sending content length for audio/l16" << endl);
+	}
 #endif
 
     int ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
