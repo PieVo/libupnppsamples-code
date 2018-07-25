@@ -22,7 +22,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <strings.h>
-
+#include <chrono>
 #include <string>
 #include <iostream>
 
@@ -41,7 +41,7 @@ using namespace std;
 using namespace UPnPClient;
 using namespace UPnPP;
 
-WorkQueue<AudioMessage*> audioqueue("audioqueue", 4);
+WorkQueue<AudioMessage*> audioqueue("audioqueue", 14);
 
 // @param name can be uuid or friendly name, we try both. The chance that a
 //     device would have a uuid which would be the friendly name of
@@ -99,6 +99,8 @@ static bool whatfile(const string& audiofile, AudioSink::Context *ctxt)
         ctxt->content_type = "audio/mpeg";
     } else if (!strcasecmp("wav", cext)) {
         ctxt->content_type = "audio/wav";
+    } else if (!strcasecmp("l16", cext)) {
+        ctxt->content_type = "audio/l16";
     } else {
         cerr << "Unknown extension " << ext << endl;
         return false;
@@ -113,8 +115,7 @@ void *readworker(void *a)
     int fd = 0;
     fd_set set;
     int n;
-    int no_data = 0;
-    unsigned int allocbytes = 4096; //sizeof
+
 
     if (ctxt->filename.compare("stdin")) {
         if ((fd = open(ctxt->filename.c_str(), O_RDWR | O_NONBLOCK)) < 0) {
@@ -123,75 +124,77 @@ void *readworker(void *a)
             exit(1);
         }
     }
-    FD_ZERO(&set);
-    FD_SET(fd, &set);
-
-    char *buf = (char *)malloc(allocbytes);
-    if (buf == 0) {
-        cerr << "readWorker: can't allocate " << allocbytes << " bytes\n";
-        exit(1);
-    }
 
     // Loop around select, for sending chunks into the buffer
     for (;;) {
-        n = select(fd+1, &set, NULL, NULL, NULL);
+        struct timeval tv;
+        unsigned int allocbytes = 4096;
+        unsigned int totalbytes = 0;
+	int no_data = 0;
+        char *buf = (char *)malloc(allocbytes);
+        if (buf == 0) {
+            cerr << "readWorker: can't allocate " << allocbytes << " bytes\n";
+            exit(1);
+        }
+
+        //cout << "w:" << endl;
+        FD_ZERO(&set);
+        FD_SET(fd, &set);
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        n = select(fd+1, &set, NULL, NULL, &tv);
 	if (!n) {
+          cout << "c:" << endl;		
+	  ctxt->streaming = false;
 	  continue;
 	}
         if (n == -1) {
           perror("select");
 	  return nullptr;
 	}
-        allocbytes = 4096;
-	unsigned int totalbytes = 0;
+
 	if (FD_ISSET(fd, &set)) {
+            //cerr << "Data avail, start read" << endl;
             // Keep on reading until an entire chunk is available
 	    for (;;) {
                 ssize_t readbytes = read(fd, buf, allocbytes);
+		cout << "r:" << readbytes << endl;
 	        if (readbytes > 0) {
-	            allocbytes -= readbytes;
-	            totalbytes += readbytes;
-	            buf += totalbytes;
-	            if (allocbytes == 0) {
-                        AudioMessage *ap = new AudioMessage(buf, readbytes, totalbytes);
-	                if (!audioqueue.put(ap, false)) {
-		            cerr << "readWorker: queue dead: exiting\n";
-		            exit(1);
-	                }
-	                ctxt->streaming = true;
+                    cout << "q:" << audioqueue.qsize() << endl;
+		    AudioMessage *ap = new AudioMessage(buf, readbytes, allocbytes);
+		    //cout << "put" << endl;
+	            if (!audioqueue.put(ap, false)) {
+		        cerr << "readWorker: queue timeout (or dead?)\n";
+		        free(buf);
+		        break;
 	            }
-	        } else {
-                    // If this occurs very often, there is probably no more music
-		    if (errno == EWOULDBLOCK) {
-	                if (++no_data > 10) {
-                            ctxt->streaming = false;
-	                }
-                    break;
+		    //cout << "in" << endl;
+	            ctxt->streaming = true;
+		    break;
+	        } else if (readbytes == -1) {
+		    free(buf);
+		    if (errno == EWOULDBLOCK || errno == EAGAIN) {
+	                cout << "would block" << endl;
+	                break;
 	            } else {
-                        perror("read");
+                        perror("read error: ");
 		        return nullptr;
 	            }
-	        }
+	        } else {
+                    free(buf);
+		    usleep(100*1000);
+		    cout << "EOF? continue" << endl;
+		    break;
+		}
 	    }
 	}
+        // TODO: Exit ahndler
+	// If ctxt->stoprunning break;
     }
 
-        //cerr << "readworker: got " << readbytes << "bytes\n";
- //       if (readbytes < 0) {
-   //         cerr << "readWorker: read error on " << ctxt->filename <<
-     //           " errno " << errno << endl;
-       //     exit(1);
-       // } else if (readbytes == 0) {
-            audioqueue.waitIdle();
-            audioqueue.setTerminateAndWait();
-            return nullptr;
-        //}
-        //AudioMessage *ap = new AudioMessage(buf, readbytes, allocbytes);
-        //if (!audioqueue.put(ap, false)) {
-         //   cerr << "readWorker: queue dead: exiting\n";
-         //   exit(1);
-       // }
-   // }
+    audioqueue.waitIdle();
+    audioqueue.setTerminateAndWait();
+    return nullptr;
 }
 
 string didlmake(const string& uri, const string& mime)
@@ -211,7 +214,8 @@ string didlmake(const string& uri, const string& mime)
     ss << "<res " << "duration=\"" << upnpduration(30)
        << "\" "
        << "sampleFrequency=\"44100\" audioChannels=\"2\" "
-       << "protocolInfo=\"http-get:*:" << mime << ":*\""
+//       << "protocolInfo=\"http-get:*:" << mime << ":*\""
+       << "protocolInfo=\"get:*:audio/L16;rate=44100;channels=2:DLNA.ORG_PN=LPCM;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000\""
        << ">"
        << SoapHelp::xmlQuote(uri)
        << "</res>"
@@ -363,6 +367,7 @@ int main(int argc, char *argv[])
     {
       if (ctxt->streaming && !play_was_send)
       {
+        cout << "Setting transport URI" << endl;
         // Start the renderer
         if (avth->setAVTransportURI(uri, didlmake(uri, ctxt->content_type)) != 0) {
             cerr << "setAVTransportURI failed\n";
@@ -370,8 +375,8 @@ int main(int argc, char *argv[])
         }
         // Philips streamium needs a bit of delay here. It would be best to wait for
         // confirmation of the above.
-        usleep(100*1000);
-
+        usleep(750*1000);
+        cout << "Sending play command" << endl;
         if (avth->play() != 0) {
             cerr << "play failed\n";
             return 1;
@@ -381,6 +386,7 @@ int main(int argc, char *argv[])
       }
       if (!ctxt->streaming && !stop_was_send)
       {
+        cout << "Sending stop command" << endl;
         // Stop before starting somehting
         if (avth->stop() != 0) {
           cerr << "stop failed\n";
@@ -389,7 +395,7 @@ int main(int argc, char *argv[])
         stop_was_send = true;
         play_was_send = false;
       }
-      usleep(500*1000);
+      usleep(50*1000);
     }
     readthread.join();
     return 0;
