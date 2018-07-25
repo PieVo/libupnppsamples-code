@@ -27,7 +27,6 @@
 #include <list>
 #include <mutex>
 #include <condition_variable>
-
 #include <libupnpp/log.h>
 
 /**
@@ -107,7 +106,13 @@ public:
             m_clientsleeps++;
             // Keep the order: we test ok() AFTER the sleep...
             m_clients_waiting++;
-            m_ccond.wait(lock);
+            if (m_ccond.wait_for(lock, std::chrono::seconds(3)) == std::cv_status::timeout) {
+                while (!m_queue.empty()) {
+		    m_queue.pop();
+		}
+                return false;
+            }
+
             if (!ok()) {
                 m_clients_waiting--;
                 return false;
