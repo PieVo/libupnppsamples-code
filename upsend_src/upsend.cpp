@@ -41,7 +41,7 @@ using namespace std;
 using namespace UPnPClient;
 using namespace UPnPP;
 
-WorkQueue<AudioMessage*> audioqueue("audioqueue", 14);
+WorkQueue<AudioMessage*> audioqueue("audioqueue", 4);
 
 // @param name can be uuid or friendly name, we try both. The chance that a
 //     device would have a uuid which would be the friendly name of
@@ -130,7 +130,7 @@ void *readworker(void *a)
         struct timeval tv;
         unsigned int allocbytes = 4096;
         unsigned int totalbytes = 0;
-	int no_data = 0;
+        int no_data = 0;
         char *buf = (char *)malloc(allocbytes);
         if (buf == 0) {
             cerr << "readWorker: can't allocate " << allocbytes << " bytes\n";
@@ -143,24 +143,24 @@ void *readworker(void *a)
         tv.tv_sec = 1;
         tv.tv_usec = 0;
         n = select(fd+1, &set, NULL, NULL, &tv);
-	if (!n) {
-          cout << "c:" << endl;		
-	  ctxt->streaming = false;
-	  continue;
-	}
+        if (!n) {
+          //cout << "c:" << endl;
+          ctxt->streaming = false;
+          continue;
+        }
         if (n == -1) {
           perror("select");
-	  return nullptr;
-	}
+          return nullptr;
+        }
 
-	if (FD_ISSET(fd, &set)) {
+        if (FD_ISSET(fd, &set)) {
             //cerr << "Data avail, start read" << endl;
             // Keep on reading until an entire chunk is available
 	    for (;;) {
                 ssize_t readbytes = read(fd, buf, allocbytes);
-		cout << "r:" << readbytes << endl;
+		//cout << "r:" << readbytes << endl;
 	        if (readbytes > 0) {
-                    cout << "q:" << audioqueue.qsize() << endl;
+                    //cout << "q:" << audioqueue.qsize() << endl;
 		    AudioMessage *ap = new AudioMessage(buf, readbytes, allocbytes);
 		    //cout << "put" << endl;
 	            if (!audioqueue.put(ap, false)) {
@@ -200,6 +200,16 @@ void *readworker(void *a)
 string didlmake(const string& uri, const string& mime)
 {
     ostringstream ss;
+    string protoInfo;
+    if (mime == "audio/l16")
+        protoInfo = "\"http-get:*:audio/L16:DLNA.ORG_PN=LPCM;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000\"";
+    else if (mime == "audio/wav")
+        protoInfo = "\"http-get:*:audio/wav:DLNA.ORG_FLAGS=9d700000000000000000000000000000\"";
+    else if (mime == "audio/flac")
+        protoInfo = "\"http-get:*:audio/flac:DLNA.ORG_FLAGS=9d700000000000000000000000000000\"";
+    else if (mime == "audio/mpeg")
+        protoInfo = "\"http-get:*:audio/mpeg:DLNA.ORG_PN=MP3X;DLNA.ORG_FLAGS=ED100000000000000000000000000000\"";
+
     ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
        "<DIDL-Lite xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
        "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" "
@@ -213,9 +223,10 @@ string didlmake(const string& uri, const string& mime)
 #warning "problem with resource values!"
     ss << "<res " << "duration=\"" << upnpduration(30)
        << "\" "
-       << "sampleFrequency=\"44100\" audioChannels=\"2\" "
+       << "sampleFrequency=\"44100\" audioChannels=\"2\" ";
 //       << "protocolInfo=\"http-get:*:" << mime << ":*\""
-       << "protocolInfo=\"get:*:audio/L16;rate=44100;channels=2:DLNA.ORG_PN=LPCM;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000\""
+//       << "protocolInfo=\"http-get:*:audio/L16;rate=44100;channels=2:DLNA.ORG_PN=LPCM;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000\""
+    ss << "protocolInfo=" << protoInfo
        << ">"
        << SoapHelp::xmlQuote(uri)
        << "</res>"
@@ -226,7 +237,7 @@ string didlmake(const string& uri, const string& mime)
 static char *thisprog;
 static char usage [] =
 "-h <hostname/ip> -p <port> <audiofile> <renderer> : play audio on given renderer\n" \
-"(Default port = 8869\n";
+"(Default port = 8869)\n";
 
 static void Usage(void)
 {
@@ -362,7 +373,7 @@ int main(int argc, char *argv[])
     string uri("http://" + host + ":" + SoapHelp::i2s(port) + "/stream." +
                ctxt->ext);
     bool play_was_send = false;
-    bool stop_was_send = false;
+    bool stop_was_send = true;
     for (;;)
     {
       if (ctxt->streaming && !play_was_send)
@@ -375,7 +386,7 @@ int main(int argc, char *argv[])
         }
         // Philips streamium needs a bit of delay here. It would be best to wait for
         // confirmation of the above.
-        usleep(750*1000);
+        usleep(250*1000);
         cout << "Sending play command" << endl;
         if (avth->play() != 0) {
             cerr << "play failed\n";
@@ -389,13 +400,13 @@ int main(int argc, char *argv[])
         cout << "Sending stop command" << endl;
         // Stop before starting somehting
         if (avth->stop() != 0) {
-          cerr << "stop failed\n";
-	  return 1;
+            cerr << "stop failed\n";
+            return 1;
         }
         stop_was_send = true;
         play_was_send = false;
       }
-      usleep(50*1000);
+      usleep(500*1000);
     }
     readthread.join();
     return 0;
